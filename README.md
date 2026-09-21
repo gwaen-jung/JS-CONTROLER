@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="docs/banner.svg" alt="JS-CONTROLER by RESHAPE LAB: handheld controller firmware for ESP32" width="100%">
+
+</div>
+
 # JS-CONTROLER
 
 Firmware tay cầm điều khiển ESP32: dual joystick, TFT ILI9341 + OLED, RF TX (ESP-NOW / NRF24), nhận telemetry, âm thanh cảnh báo (I2S PCM5100A).
