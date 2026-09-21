@@ -2,6 +2,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <math.h>
+#include "Logo/Logo.h"
 
 static TFT_eSPI tft = TFT_eSPI();
 static TFT_eSprite pfdSprite = TFT_eSprite(&tft);
@@ -440,15 +441,88 @@ void Display_ShowSettingsMenu() {
   sPrevSettingsBrightness = sMenuState.brightness;
   sPrevSettingsDarkMode = sMenuState.darkMode;
 }
-void Display_Init() {
+void Display_Init(bool darkMode) {
   tft.init();
   tft.setRotation(3);
+  sBgColor = darkMode ? TFT_BLACK : TFT_WHITE;
+  sFgColor = darkMode ? TFT_WHITE : TFT_BLACK;
   pfdSprite.createSprite(PFD_W, PFD_H);
-  drawStaticFrames();
+  tft.fillScreen(sBgColor);
+  tft.drawBitmap((SCREEN_W - kLogoTftW) / 2, (SCREEN_H - kLogoTftH) / 2,
+                 kLogoTft, kLogoTftW, kLogoTftH, sFgColor);
+  sNeedsDashboardFrame = true;
   sInited = true;
   sPrevArmed = false;
   sPrevUseNrf24 = false;
   sPrevDroneConnected = false;
+}
+
+// Logo to -> nho -> to -> nho -> to trong durationMs. Moi khung ve logo da phong/thu vao sprite 1bpp
+// (181x200 = ~4.5KB) roi day ca sprite len TFT, nen khung sau luon de len sach khung truoc, khong nhap nhay.
+void Display_BootLogo(uint32_t durationMs, void (*onFrame)(uint32_t elapsed, uint32_t total)) {
+  if (!sInited) return;
+
+  constexpr float kMinScale = 0.6f;
+  constexpr float kCycles = 2.0f;
+  constexpr int kRowBytes = (kLogoTftW + 7) / 8;
+  const int posX = (SCREEN_W - kLogoTftW) / 2;
+  const int posY = (SCREEN_H - kLogoTftH) / 2;
+
+  TFT_eSprite logo = TFT_eSprite(&tft);
+  logo.setColorDepth(1);
+  if (logo.createSprite(kLogoTftW, kLogoTftH) == nullptr) {
+    // Het RAM: giu logo tinh nhu cu roi cho het thoi gian.
+    const uint32_t start = millis();
+    while (millis() - start < durationMs) {
+      if (onFrame) onFrame(millis() - start, durationMs);
+      delay(1);
+    }
+    return;
+  }
+  logo.setBitmapColor(sFgColor, sBgColor);
+
+  int srcCol[kLogoTftW];
+  int srcRow[kLogoTftH];
+  const float cx = (kLogoTftW - 1) / 2.0f;
+  const float cy = (kLogoTftH - 1) / 2.0f;
+
+  const uint32_t start = millis();
+  for (;;) {
+    const uint32_t elapsed = millis() - start;
+    if (elapsed >= durationMs) break;
+
+    const float phase = 2.0f * PI * kCycles * elapsed / durationMs;
+    const float scale = kMinScale + (1.0f - kMinScale) * (0.5f + 0.5f * cosf(phase));
+
+    for (int x = 0; x < kLogoTftW; ++x) {
+      const int sx = static_cast<int>(lroundf((x - cx) / scale + cx));
+      srcCol[x] = (sx >= 0 && sx < kLogoTftW) ? sx : -1;
+    }
+    for (int y = 0; y < kLogoTftH; ++y) {
+      const int sy = static_cast<int>(lroundf((y - cy) / scale + cy));
+      srcRow[y] = (sy >= 0 && sy < kLogoTftH) ? sy : -1;
+    }
+
+    logo.fillSprite(0);
+    for (int y = 0; y < kLogoTftH; ++y) {
+      if (srcRow[y] < 0) continue;
+      const uint8_t *row = kLogoTft + srcRow[y] * kRowBytes;
+      for (int x = 0; x < kLogoTftW; ++x) {
+        const int sx = srcCol[x];
+        if (sx < 0) continue;
+        if (pgm_read_byte(row + (sx >> 3)) & (0x80 >> (sx & 7))) logo.drawPixel(x, y, 1);
+      }
+    }
+    logo.pushSprite(posX, posY);
+
+    if (onFrame) onFrame(elapsed, durationMs);
+  }
+
+  // Khung cuoi: logo kich thuoc day du.
+  logo.fillSprite(0);
+  logo.drawBitmap(0, 0, kLogoTft, kLogoTftW, kLogoTftH, 1);
+  logo.pushSprite(posX, posY);
+  logo.deleteSprite();
 }
 
 void Display_Update(const DisplayState &state) {

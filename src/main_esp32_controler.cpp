@@ -58,6 +58,32 @@ static void playVoiceNotification(VoiceClip clip) {
   Audio_PlayVoice(clip);
   gLastVoiceNotificationMs = now;
 }
+// Trong luc boot (logo TFT + OLED chay ~2.5s) loop() chua chay nen Audio_Update() khong duoc goi deu,
+// bo dem I2S (~100ms) can -> tieng bi giat. Task nay bom audio doc lap voi toc do ve man hinh.
+static volatile bool gAudioPumpRun = false;
+static volatile bool gAudioPumpDone = false;
+
+static void audioPumpTask(void *) {
+  while (gAudioPumpRun) {
+    Audio_Update();
+    vTaskDelay(1);
+  }
+  gAudioPumpDone = true;
+  vTaskDelete(nullptr);
+}
+
+static void startAudioPump() {
+  gAudioPumpDone = false;
+  gAudioPumpRun = true;
+  xTaskCreatePinnedToCore(audioPumpTask, "audio_pump", 4096, nullptr, 2, nullptr, 0);
+}
+
+// Phai dung han truoc khi loop() chay: Audio_Update() khong an toan neu 2 task cung goi.
+static void stopAudioPump() {
+  gAudioPumpRun = false;
+  while (!gAudioPumpDone) delay(1);
+}
+
 static void saveSettings() {
   controllerPrefs.putUChar("volume", settingsVolume);
   controllerPrefs.putUChar("brightness", settingsBrightness);
@@ -280,8 +306,8 @@ static RCCommand buildCommand() {
 
   // Joystick 2 remains visible/transmitted for diagnostics; STM32 ignores it
   // while the bench-test flight path is throttle-only.
-  cmd.roll = (int16_t)mapCentered(rawRoll, rollCenter, false);
-  cmd.pitch = (int16_t)mapCentered(rawPitch, pitchCenter, false);
+  cmd.roll = (int16_t)mapCentered(rawRoll, rollCenter, true); // VRx (GPIO32) lap nguoc, dao dau cho dung chieu
+  cmd.pitch = (int16_t)mapCentered(rawPitch, pitchCenter, true); // VRy (GPIO33) dao dau cho dung chieu
   cmd.yaw = (int16_t)mapCentered(rawYaw, yawCenter, yawInvert);
   // cmd.throttle o day van la vi tri VAT LY tho cua J1 (1000..2000), CHI dung de
   // nhan dien cu ARM/DISARM (yeu cau keo throttle xuong day + yaw). Muc throttle
@@ -370,9 +396,14 @@ void setup() {
   settingsBrightness = constrain(controllerPrefs.getUChar("brightness", 100), (uint8_t)25, (uint8_t)100);
   settingsDarkMode = controllerPrefs.getBool("dark", true);
   Audio_SetVolume(settingsVolume);
+  startAudioPump();                // tieng "ready" phat ngay, khong doi init ESP-NOW/TFT/OLED xong
   initEspNowController();
-  Display_Init();
+  Display_Init(settingsDarkMode);
   OLED_Init();
+  // TFT: logo to-nho-to-nho 2.5s, dong thoi OLED chay chu RESHAPE LAB.
+  Display_BootLogo(2500, OLED_BootMarqueeFrame);
+  stopAudioPump();                 // tu day loop() tu goi Audio_Update()
+  OLED_StartTask();                // roi OLED chuyen sang logo + thong so, TFT vao dashboard
 
   Serial.println("[CTRL] Hold SW for 5s to switch mode");
 }
@@ -591,7 +622,15 @@ void loop() {
   cmd.checksum = computeChecksum(cmd);
 
   sendControlWithCmd(cmd);
-  OLED_Update();
+
+  OledInfo oledInfo{};
+  oledInfo.sendOk = gSendOkCount;
+  oledInfo.sendFail = gSendFailCount;
+  oledInfo.throttleUs = static_cast<uint16_t>(cmd.throttle);
+  oledInfo.telemetryAgeMs = gTelemetryLastMs == 0 ? 0xFFFFFFFFu : millis() - gTelemetryLastMs;
+  oledInfo.armed = sendingEnabled;
+  oledInfo.useNrf24 = !modeEspNow;
+  OLED_SetInfo(oledInfo);
 
   delay(20);
 }

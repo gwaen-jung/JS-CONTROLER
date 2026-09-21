@@ -23,7 +23,11 @@
 
 static const float PFD_PX_PER_DEG = 4.2f;
 
-void Display_Init();
+// Khoi tao TFT va ve logo khoi dong. Man hinh dashboard duoc ve o lan Display_Update() dau tien.
+void Display_Init(bool darkMode = true);
+// Logo khoi dong phong to/thu nho (to-nho-to-nho-to) trong durationMs, chan luon. onFrame goi moi khung
+// (elapsed, total) de task khac (OLED, audio) chay cung luc. Goi sau Display_Init().
+void Display_BootLogo(uint32_t durationMs, void (*onFrame)(uint32_t elapsed, uint32_t total) = nullptr);
 
 struct DisplayState {
   bool inSettingsMenu;
